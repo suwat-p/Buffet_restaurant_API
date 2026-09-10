@@ -427,7 +427,7 @@ namespace Buffet_Restaurant_API.Controllers
                                      join o in _context.Orders on od.Order_id equals o.Order_id
                                      join m in _context.Menus on od.Menu_id equals m.Menu_id // 🟢 แก้เป็น od.Menu_id
                                      where o.Bill_id == billId
-                                           && o.Order_Status == "ดำเนินการเสร็จสิ้น"
+                                           && o.Order_Status == "เสร็จสิ้น"
                                            && od.PriceAtOrderTime > 0
                                      select new
                                      {
