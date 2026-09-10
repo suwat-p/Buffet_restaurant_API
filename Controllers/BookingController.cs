@@ -145,10 +145,18 @@ namespace Buffet_Restaurant_API.Controllers
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
-                decimal total = (dto.Adult_Count * PricePerAdult) + (dto.Child_Count * PricePerChild);
+                // 🟢 1. ดึงการตั้งค่าราคาล่าสุดที่เจ้าของร้านตั้งไว้จาก Res_Config
+                var resConfig = await _context.Res_Config.FirstOrDefaultAsync();
 
-                // 🟢 [โหมดทดสอบ] บังคับยอดมัดจำให้เป็น 1.00 บาท
-                decimal deposit = 1.00m;
+                // กำหนดราคาผู้ใหญ่/เด็กจาก DB (หากใน DB ไม่มีข้อมูล ให้ใช้ค่า Default สำรอง)
+                decimal pricePerAdult = resConfig?.Price_Adult ?? 0m;
+                decimal pricePerChild = resConfig?.Price_Child ?? 0m;
+
+                // 🟢 2. คำนวณราคารวมจริง
+                decimal total = (dto.Adult_Count * pricePerAdult) + (dto.Child_Count * pricePerChild);
+
+                // 🟢 3. คำนวณยอดมัดจำ 50% จากราคารวม
+                decimal deposit = total * 0.5m;
 
                 var booking = new Booking
                 {
@@ -157,7 +165,7 @@ namespace Buffet_Restaurant_API.Controllers
                     Adult_Count = dto.Adult_Count,
                     Child_Count = dto.Child_Count,
                     Booking_Status = "Pending",
-                    Deposit_Amount = deposit        // ← บันทึก 1.00 บาทลง DB
+                    Deposit_Amount = deposit        // บันทึกยอดมัดจำจริงลง DB
                 };
                 _context.Bookings.Add(booking);
                 await _context.SaveChangesAsync();
@@ -177,11 +185,11 @@ namespace Buffet_Restaurant_API.Controllers
                     {
                         booking_id = booking.Booking_id,
                         tables = availableTables.Select(t => t.Table_Number),
-                        price_per_adult = PricePerAdult,
-                        price_per_child = PricePerChild,
+                        price_per_adult = pricePerAdult,
+                        price_per_child = pricePerChild,
                         total_amount = total,
-                        deposit_amount = deposit,           // จ่าย 1.00 บาทตอนทดสอบ
-                        remaining_amount = total - deposit
+                        deposit_amount = deposit,            // ส่งยอดมัดจำ 50% จริงให้ Frontend
+                        remaining_amount = total - deposit   // ยอดคงเหลือไปจ่ายที่แคชเชียร์
                     });
             }
             catch (Exception ex)
