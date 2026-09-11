@@ -145,8 +145,9 @@ namespace Buffet_Restaurant_API.Controllers
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
-                // 🟢 1. ดึงการตั้งค่าราคาล่าสุดที่เจ้าของร้านตั้งไว้จาก Res_Config
-                var resConfig = await _context.Res_Config.FirstOrDefaultAsync();
+                var resConfig = await _context.Res_Config
+         .OrderByDescending(c => c.Config_id)
+         .FirstOrDefaultAsync();
 
                 // กำหนดราคาผู้ใหญ่/เด็กจาก DB (หากใน DB ไม่มีข้อมูล ให้ใช้ค่า Default สำรอง)
                 decimal pricePerAdult = resConfig?.Price_Adult ?? 0m;
