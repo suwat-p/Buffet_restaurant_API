@@ -208,6 +208,28 @@ namespace Buffet_Restaurant_Managment_System_API.Controllers
 
             return Ok(new { Message = "สมัครสมาชิกสำเร็จ", Member = newMember });
         }
+        [HttpPut("HashPassword")]
+        public async Task<IActionResult> HashPassword(int id)
+        {
+            var employee = await _context.Employee.FindAsync(id);
+            if (employee == null)
+            {
+                return NotFound(new { Message = "ไม่พบข้อมูลพนักงาน" });
+            }
+
+            if (!employee.Password.StartsWith("$2a$"))
+            {
+                employee.Password = BCrypt.Net.BCrypt.HashPassword(employee.Password);
+                await _context.SaveChangesAsync();
+                return Ok(new { Message = "รหัสผ่านถูกเข้ารหัสเรียบร้อยแล้ว" });
+            }
+            else
+            {
+                return BadRequest(new { Message = "รหัสผ่านนี้ถูกเข้ารหัสแล้ว" });
+            }
+        }
+        
+        
 
         [HttpPost("send-otp")]
         public async Task<IActionResult> SendOtp(string email)
