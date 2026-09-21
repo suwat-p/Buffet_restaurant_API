@@ -40,8 +40,7 @@ namespace Buffet_Restaurant_Managment_System_API.Controllers
                 return NotFound(new { message = "ไม่พบข้อมูลการจอง" });
             }
 
-            // [โหมดทดสอบ] ส่ง 1.00 เข้าไปให้ Service เจน QR
-            decimal amountToPay = 1.00m;
+            decimal amountToPay = booking.Deposit_Amount;
 
             var qrResult = await _promptPayService.GeneratePromptPayQr(amountToPay);
 
@@ -61,20 +60,14 @@ namespace Buffet_Restaurant_Managment_System_API.Controllers
                 var parsed = JsonSerializer.Deserialize<JsonElement>(qrResult);
                 var transactionId = parsed.GetProperty("data").GetProperty("transactionId").GetString();
 
-                // 🟢 ดึงยอดเงินจริงที่ Gateway เจนออกมา (เช่น "1.02")
-                var amountStr = parsed.GetProperty("data").GetProperty("amount").GetString();
 
-                // 🟢 อัปเดตยอดมัดจำใน DB ให้เป็น 1.02 ตรงตาม QR จริง
-                if (decimal.TryParse(amountStr, out decimal actualAmount))
-                {
-                    booking.Deposit_Amount = actualAmount;
-                    await _context.SaveChangesAsync();
-                }
+                var amountStr = parsed.GetProperty("data").GetProperty("amount").GetString();
 
                 return Ok(new
                 {
                     qr_data = qrResult,
-                    amount_pay = amountStr, // 🟢 ส่ง 1.02 กลับไปให้ Frontend แสดงผล
+                    amount_pay = amountStr,          // ยอดที่ต้องโอนจริงตาม QR (มีเศษสุ่มเพื่อ track)
+                    deposit_amount = booking.Deposit_Amount, // ยอดมัดจำจริงตามราคาที่ตั้งไว้ (อ้างอิง)
                     booking_id = booking.Booking_id,
                     transaction_id = transactionId,
                 });
@@ -106,8 +99,7 @@ namespace Buffet_Restaurant_Managment_System_API.Controllers
                 return NotFound(new { message = "ไม่พบข้อมูลบิลที่ต้องการชำระเงิน" });
             }
 
-            // [โหมดทดสอบ] ยิงส่ง 1.00 บาทเข้า Gateway
-            decimal amountToPay = 1.00m;
+            decimal amountToPay = bill.Total_amount;
 
             var qrResult = await _promptPayService.GeneratePromptPayQr(amountToPay);
             Console.WriteLine($"=== CHECKOUT QR RESULT: {qrResult} ===");
