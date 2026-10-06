@@ -92,6 +92,7 @@ namespace Buffet_Restaurant_Managment_System_API.Controllers
         public async Task<IActionResult> CreateCheckoutQr([FromBody] CheckoutQrRequestDto request)
         {
             var bill = await _context.Bill
+                .Include(b => b.Booking)
                 .FirstOrDefaultAsync(b => b.Bill_id == request.BillId);
 
             if (bill == null)
@@ -99,8 +100,28 @@ namespace Buffet_Restaurant_Managment_System_API.Controllers
                 return NotFound(new { message = "ไม่พบข้อมูลบิลที่ต้องการชำระเงิน" });
             }
 
-            decimal amountToPay = bill.Total_amount;
+            // 1. ดึงยอดมัดจำ (ถ้ามี)
+            decimal depositAmount = bill.Booking?.Deposit_Amount ?? 0m;
 
+            // 2. ใช้ยอดเงินที่ส่งมาจาก DTO (เนื่องจากใน DB ยังเป็น 0)
+            decimal originalTotal = request.TotalAmount;
+
+            // 3. คำนวณยอดสุทธิที่ต้องจ่ายจริงหลังหักมัดจำ
+            decimal amountToPay = Math.Max(0m, originalTotal - depositAmount);
+
+            // 🔴 4. ป้องกันการยิง API ชำระเงินด้วยยอด 0 บาท
+            if (amountToPay <= 0)
+            {
+                return BadRequest(new
+                {
+                    message = "ไม่สามารถสร้าง QR Code ได้ เนื่องจากยอดเงินที่ต้องชำระน้อยกว่าหรือเท่ากับ 0 บาท (ยอดมัดจำครอบคลุมค่าบริการแล้ว)",
+                    original_total = originalTotal,
+                    deposit_deducted = depositAmount,
+                    amount_pay = 0
+                });
+            }
+
+            // 5. สร้าง PromptPay QR Code ตามยอดเงินที่ต้องจ่ายจริง
             var qrResult = await _promptPayService.GeneratePromptPayQr(amountToPay);
             Console.WriteLine($"=== CHECKOUT QR RESULT: {qrResult} ===");
 
@@ -125,14 +146,14 @@ namespace Buffet_Restaurant_Managment_System_API.Controllers
                     ? amountProp.GetDecimal().ToString("F2")
                     : amountProp.GetString();
 
-                // 🟢 เปลี่ยนมาใช้ยอดเงินจริงจาก QR (เช่น 1.02) อัปเดตลง Bill DB
+                // 🟢 อัปเดต Total_amount ลงใน Database จากราคาจริงก่อนหักมัดจำ (หรือยอดชำระสุทธิ แล้วแต่ Logic ร้าน)
                 if (decimal.TryParse(amountStr, out decimal actualAmount))
                 {
-                    bill.Total_amount = actualAmount;
+                    bill.Total_amount = originalTotal; // หรือใช้ actualAmount + depositAmount ตามโครงสร้างระบบ
                 }
                 else
                 {
-                    bill.Total_amount = amountToPay;
+                    bill.Total_amount = originalTotal;
                 }
 
                 await _context.SaveChangesAsync();
@@ -140,7 +161,9 @@ namespace Buffet_Restaurant_Managment_System_API.Controllers
                 return Ok(new
                 {
                     qr_data = qrResult,
-                    amount_pay = amountStr, // 🟢 ส่ง 1.02 ตรงตามธนาคารกลับไปหน้าบ้าน
+                    amount_pay = amountStr,           // ยอดที่ต้องสแกนจ่ายจริง
+                    original_total = originalTotal,   // ราคารวมอาหารทั้งหมดจาก DTO
+                    deposit_deducted = depositAmount,  // ยอดมัดจำที่หักออก
                     bill_id = bill.Bill_id,
                     booking_id = bill.Booking_id,
                     transaction_id = transactionId

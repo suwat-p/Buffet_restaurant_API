@@ -42,16 +42,21 @@ builder.Services.AddCors(options =>
     options.AddPolicy("AllowAngular", policy =>
     {
         policy.WithOrigins(
-                "http://localhost:4200",
-                "https://localhost:4200",
-                "https://buffet-restaurant-management-system.vercel.app",
-                "https://buffet-restaurant-management-system-596epjhvb.vercel.app",
-                "http://localhost:3000"
-            )
-            .SetIsOriginAllowed(origin => true) // 🟢 อนุญาต Origin จาก Vercel Subdomain และ Localhost ทั้งหมด
-            .AllowAnyMethod()
-            .AllowAnyHeader()
-            .AllowCredentials();
+                    "http://localhost:4200",
+                    "https://localhost:4200",
+                    "https://buffet-restaurant-management-system.vercel.app",
+                    "http://localhost:3000"
+                )
+                // 🟢 ใช้ SetIsOriginAllowed ในรูปแบบที่ตรวจสอบเฉพาะ Domain/Subdomain ของ Vercel และ Localhost
+                .SetIsOriginAllowed(origin => 
+                    string.IsNullOrEmpty(origin) ||
+                    origin.StartsWith("http://localhost") ||
+                    origin.StartsWith("https://localhost") ||
+                    origin.EndsWith(".vercel.app")
+                )
+                .AllowAnyMethod()
+                .AllowAnyHeader()
+                .AllowCredentials(); // 🟢 จำเป็นต้องใช้คู่กับ SignalR (WebSockets/Negotiate)
     });
 });
 

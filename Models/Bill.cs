@@ -18,5 +18,7 @@ namespace Buffet_Restaurant_API.Models
         public decimal Fine {get; set;}
         public decimal Total_amount {get; set;}
         public string? PaymentMethod {get; set;}
+        [ForeignKey("Booking_id")]
+        public virtual Booking? Booking { get; set; }
     }
 }

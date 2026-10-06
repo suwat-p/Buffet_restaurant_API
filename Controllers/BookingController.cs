@@ -85,6 +85,7 @@ namespace Buffet_Restaurant_API.Controllers
                 Booking_Status = booking.Booking_Status,
                 Adult_Count = booking.Adult_Count,
                 Child_Count = booking.Child_Count,
+                Deposit_Amount = booking.Deposit_Amount,
                 Tables_Booked = booking.GroupTables.Select(gt => gt.Table?.Table_Number ?? "").ToList()
             });
         }

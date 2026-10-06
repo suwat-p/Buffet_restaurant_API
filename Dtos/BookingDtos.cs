@@ -23,6 +23,7 @@ namespace Buffet_Restaurant_API.Dtos
         public string Booking_Status { get; set; } = string.Empty;
         public int Adult_Count { get; set; }
         public int Child_Count { get; set; }
+        public decimal Deposit_Amount { get; set; }
         public List<string> Tables_Booked { get; set; } = new();
         public string? QR_Url { get; set; }
 
