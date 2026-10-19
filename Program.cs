@@ -39,7 +39,7 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-// --- 🟢 2. CORS Configuration (แก้ไขส่วนที่ซ้อนกันออกแล้ว) ---
+// --- 🟢 2. CORS Configuration  ---
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAngular", policy =>
