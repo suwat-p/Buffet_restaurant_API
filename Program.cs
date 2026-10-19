@@ -11,6 +11,9 @@ using Buffet_Restaurant_Managment_System_API.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// --- 🟢 1. Server Port & Network Binding (ฟังทั้ง IPv4 และ IPv6 เพื่อแก้ ngrok 8012) ---
+builder.WebHost.UseUrls("http://0.0.0.0:5277", "http://[::]:5277");
+
 // --- JWT Configuration ---
 var jwtKey = builder.Configuration["Jwt:Key"];
 if (string.IsNullOrEmpty(jwtKey))
@@ -36,27 +39,16 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-// --- CORS Configuration ---
+// --- 🟢 2. CORS Configuration (แก้ไขส่วนที่ซ้อนกันออกแล้ว) ---
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAngular", policy =>
     {
-        policy.WithOrigins(
-                    "http://localhost:4200",
-                    "https://localhost:4200",
-                    "https://buffet-restaurant-management-system.vercel.app",
-                    "http://localhost:3000"
-                )
-                // 🟢 ใช้ SetIsOriginAllowed ในรูปแบบที่ตรวจสอบเฉพาะ Domain/Subdomain ของ Vercel และ Localhost
-                .SetIsOriginAllowed(origin => 
-                    string.IsNullOrEmpty(origin) ||
-                    origin.StartsWith("http://localhost") ||
-                    origin.StartsWith("https://localhost") ||
-                    origin.EndsWith(".vercel.app")
-                )
-                .AllowAnyMethod()
-                .AllowAnyHeader()
-                .AllowCredentials(); // 🟢 จำเป็นต้องใช้คู่กับ SignalR (WebSockets/Negotiate)
+        policy.WithOrigins("http://localhost:4200","https://buffet-restaurant-management-system.vercel.app")
+              .AllowAnyMethod()
+              .AllowAnyHeader()
+              .WithExposedHeaders("ngrok-skip-browser-warning") // 🟢 เพิ่มบรรทัดนี้
+              .AllowCredentials();
     });
 });
 
@@ -113,7 +105,6 @@ var connectionString = connectionTemplate?
     .Replace("{DB_USERNAME}", Environment.GetEnvironmentVariable("DB_USERNAME"))
     .Replace("{DB_PASSWORD}", Environment.GetEnvironmentVariable("DB_PASSWORD"));
 
-
 if (!string.IsNullOrEmpty(connectionString) && !connectionString.Contains("Guid Format", StringComparison.OrdinalIgnoreCase))
 {
     connectionString += (connectionString.TrimEnd().EndsWith(";") ? "" : ";") + "Guid Format=None;";
@@ -125,15 +116,18 @@ builder.Services.AddDbContext<restaurantDbContext>(options =>
 builder.Services.AddHttpClient<PromptPayService>();
 builder.Services.AddMemoryCache();
 
+// =========================================================================
+// 🟢 3. BUILD APP (จุดแบ่งระหว่างการลงทะเบียน Service และการเรียกใช้งาน Middleware)
+// =========================================================================
 var app = builder.Build();
 
-// --- Pipeline Order (สำคัญมากสำหรับ CORS) ---
+// --- Pipeline Order ---
 app.UseSwagger();
 app.UseSwaggerUI();
 
-app.UseRouting(); // 🟢 1. ต้องเรียก UseRouting() ก่อน UseCors()
+app.UseRouting();
 
-app.UseCors("AllowAngular"); // 🟢 2. เรียก UseCors() หลัง UseRouting() และก่อน Authentication
+app.UseCors("AllowAngular");
 
 app.UseAuthentication();
 app.UseAuthorization();

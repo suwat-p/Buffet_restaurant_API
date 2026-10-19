@@ -212,5 +212,44 @@ namespace Buffet_Restaurant_API.Controllers
                 return StatusCode(500, new { message = ex.Message });
             }
         }
+
+        // GET: api/dashboard/hourly-chart?selectedDate=2026-10-09
+        [HttpGet("hourly-chart")]
+        public async Task<IActionResult> GetHourlyChart([FromQuery] DateTime? selectedDate = null)
+        {
+            try
+            {
+                using var connection = _context.Database.GetDbConnection();
+                if (connection.State != System.Data.ConnectionState.Open)
+                {
+                    await connection.OpenAsync();
+                }
+
+                var targetDate = selectedDate ?? DateTime.Today;
+
+                // SQL ดึงยอดขาย, จำนวนผู้ใหญ่, จำนวนเด็ก แยกรายชั่วโมง
+                string sqlQuery = @"
+            SELECT 
+                CONCAT(LPAD(HOUR(b.Created_at), 2, '0'), ':00-', LPAD(HOUR(b.Created_at) + 1, 2, '0'), ':00') AS TimeSlot,
+                HOUR(b.Created_at) AS Hour,
+                COALESCE(SUM(p.Amount), 0) AS Sales,
+                COALESCE(SUM(b.NumAdults), 0) AS Adults,
+                COALESCE(SUM(b.NumChildren), 0) AS Children
+            FROM bill b
+            LEFT JOIN Payment p ON b.Bill_id = p.Bill_id
+            WHERE DATE(b.Created_at) = DATE(@TargetDate)
+            GROUP BY HOUR(b.Created_at), CONCAT(LPAD(HOUR(b.Created_at), 2, '0'), ':00-', LPAD(HOUR(b.Created_at) + 1, 2, '0'), ':00')
+            ORDER BY Hour ASC";
+
+                var rawData = await connection.QueryAsync(sqlQuery, new { TargetDate = targetDate });
+
+                return Ok(rawData);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Hourly Chart Error]: {ex.Message}");
+                return StatusCode(500, new { message = ex.Message });
+            }
+        }
     }
 }
