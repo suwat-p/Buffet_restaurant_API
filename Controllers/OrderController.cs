@@ -150,9 +150,9 @@ namespace Buffet_Restaurant_API.Controllers
                 {
                     await _hubContext.Clients.All.SendAsync("NewKitchenOrder", newOrder.Order_id);
 
-                    // 🖨️ พิมพ์บิลครัวจากฝั่ง API ทันที ไม่ต้องรอให้มีหน้าแดชบอร์ดครัวเปิดอยู่
-                    // (ออเดอร์ถูกบันทึกแล้ว ถ้าพิมพ์พลาดจะไม่ทำให้การสั่งอาหารล้มเหลว)
-                    var (printed, printMessage) = await PrintTicketForOrderAsync(newOrder.Order_id);
+                    //  พิมพ์บิลครัวจากฝั่ง API ทันที ไม่ต้องรอให้มีหน้าแดชบอร์ดครัวเปิดอยู่
+
+                    var (printed, printMessage) = await PrintKitchenTicketForOrderAsync(_context, newOrder.Order_id, GetFrontendBaseUrl());
                     if (!printed) Console.WriteLine($"[Order {newOrder.Order_id}] {printMessage}");
                 }
 
@@ -253,7 +253,7 @@ namespace Buffet_Restaurant_API.Controllers
             string printMessage = "ไม่ได้สั่งพิมพ์ (ใส่ ?print=true เพื่อพิมพ์ซ้ำ)";
             if (print)
             {
-                (printed, printMessage) = await PrintTicketForOrderAsync(orderId);
+                (printed, printMessage) = await PrintKitchenTicketForOrderAsync(_context, orderId, GetFrontendBaseUrl());
             }
 
             return Ok(new
@@ -507,23 +507,22 @@ namespace Buffet_Restaurant_API.Controllers
             return Ok(activeOrders);
         }
 
-
-        // โหลดข้อมูลออเดอร์แล้วสั่งพิมพ์บิลครัว (ใช้ทั้งตอน checkout และตอน ?print=true)
-        private async Task<(bool Printed, string Message)> PrintTicketForOrderAsync(int orderId)
+        // โหลดข้อมูลออเดอร์แล้วสั่งพิมพ์บิลครัว — เรียกจาก OrderController (สั่งหน้าร้าน) และ BookingController (เช็คอินออเดอร์ล่วงหน้า)
+        public static async Task<(bool Printed, string Message)> PrintKitchenTicketForOrderAsync(restaurantDbContext context, int orderId, string frontendBaseUrl)
         {
             try
             {
-                var order = await _context.Orders
+                var order = await context.Orders
                     .Where(o => o.Order_id == orderId)
                     .Select(o => new { o.Order_id, o.OrderDateTime, o.Bill_id })
                     .FirstOrDefaultAsync();
 
                 if (order == null) return (false, "ไม่พบรายการออเดอร์");
 
-                var bill = await _context.Bill.FirstOrDefaultAsync(b => b.Bill_id == order.Bill_id);
+                var bill = await context.Bill.FirstOrDefaultAsync(b => b.Bill_id == order.Bill_id);
 
-                var tableNumbers = await (from gt in _context.GroupTables
-                                          join t in _context.Tables on gt.Table_id equals t.Table_id
+                var tableNumbers = await (from gt in context.GroupTables
+                                          join t in context.Tables on gt.Table_id equals t.Table_id
                                           where (gt.Bill_id == order.Bill_id) ||
                                                 (bill != null && bill.Booking_id != null && gt.Booking_id == bill.Booking_id)
                                           select t.Table_Number)
@@ -532,14 +531,14 @@ namespace Buffet_Restaurant_API.Controllers
 
                 string tableDisplay = tableNumbers.Any() ? string.Join(", ", tableNumbers) : "ไม่ระบุโต๊ะ";
 
-                var items = await (from od in _context.Order_detail
-                                   join m in _context.Menus on od.Menu_id equals m.Menu_id
+                var items = await (from od in context.Order_detail
+                                   join m in context.Menus on od.Menu_id equals m.Menu_id
                                    where od.Order_id == orderId
                                    select new { m.Menu_Name, od.Quantity, od.PriceAtOrderTime }).ToListAsync();
 
                 var printItems = items.Select(i => (i.Menu_Name, i.Quantity, i.PriceAtOrderTime)).ToList();
 
-                await PrintKitchenTicketAsync(order.Order_id, tableDisplay, order.OrderDateTime, printItems);
+                await PrintKitchenTicketAsync(order.Order_id, tableDisplay, order.OrderDateTime, printItems, frontendBaseUrl);
                 return (true, "สั่งพิมพ์บิลครัวเรียบร้อยแล้ว (Image Mode)");
             }
             catch (Exception ex)
@@ -550,13 +549,14 @@ namespace Buffet_Restaurant_API.Controllers
             }
         }
 
-        private async Task PrintKitchenTicketAsync(
+        private static async Task PrintKitchenTicketAsync(
             int orderId,
             string tableNumber,
             DateTime orderTime,
-            List<(string Name, int Qty, decimal Price)> items)
+            List<(string Name, int Qty, decimal Price)> items,
+            string frontendBaseUrl)
         {
-            using (SKBitmap ticketBitmap = DrawKitchenTicketImage(orderId, tableNumber, orderTime, items))
+            using (SKBitmap ticketBitmap = DrawKitchenTicketImage(orderId, tableNumber, orderTime, items, frontendBaseUrl))
             {
                 byte[] imageBytes = ConvertBitmapToEscPosRaster(ticketBitmap);
 
@@ -581,11 +581,12 @@ namespace Buffet_Restaurant_API.Controllers
 
         // วาดบิลครัวตามรูปใบเสร็จ
 
-        private SKBitmap DrawKitchenTicketImage(
+        private static SKBitmap DrawKitchenTicketImage(
             int orderId,
             string tableNumber,
             DateTime orderTime,
-            List<(string Name, int Qty, decimal Price)> items)
+            List<(string Name, int Qty, decimal Price)> items,
+            string frontendBaseUrl)
         {
             int width = 576;                 // 80mm @ 203dpi
             int qrSize = 160;
@@ -687,7 +688,7 @@ namespace Buffet_Restaurant_API.Controllers
                 y += 8;
 
                 // --- QR ---
-                string serveUrl = $"{GetFrontendBaseUrl()}/serve-action?orderId={orderId}";
+                string serveUrl = $"{frontendBaseUrl}/serve-action?orderId={orderId}";
                 using (QRCodeGenerator qrGen = new QRCodeGenerator())
                 {
                     QRCodeData qrData = qrGen.CreateQrCode(serveUrl, QRCodeGenerator.ECCLevel.Q);
@@ -718,7 +719,7 @@ namespace Buffet_Restaurant_API.Controllers
             }
         }
 
-        private byte[] ConvertBitmapToEscPosRaster(SKBitmap bitmap)
+        private static byte[] ConvertBitmapToEscPosRaster(SKBitmap bitmap)
         {
             int width = bitmap.Width;
             int height = bitmap.Height;

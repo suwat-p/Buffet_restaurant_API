@@ -18,6 +18,7 @@ namespace Buffet_Restaurant_API.Controllers
         private readonly restaurantDbContext _context;
         private readonly IHubContext<tableStatusHub> _hubContext;
         private readonly Cloudinary _cloudinary;
+        private readonly IConfiguration _configuration;
 
         // ราคาต่อคน (บาท) — ปรับให้ตรงราคาจริงของร้าน
         private const decimal PricePerAdult = 199m;
@@ -26,11 +27,18 @@ namespace Buffet_Restaurant_API.Controllers
         public BookingController(
             restaurantDbContext context,
             IHubContext<tableStatusHub> hubContext,
-            Cloudinary cloudinary)
+            Cloudinary cloudinary,
+            IConfiguration configuration)
         {
             _context = context;
             _hubContext = hubContext;
             _cloudinary = cloudinary;
+            _configuration = configuration;
+        }
+
+        private string GetFrontendBaseUrl()
+        {
+            return _configuration["FrontendBaseUrl"] ?? "https://buffet-restaurant-management-system.vercel.app";
         }
 
 
@@ -311,6 +319,11 @@ namespace Buffet_Restaurant_API.Controllers
                         status = order.Order_Status, // "กำลังจัดเตรียมอาหาร"
                         billId = order.Bill_id
                     });
+
+                    //  พิมพ์บิลครัวทันที 
+
+                    var (printed, printMessage) = await OrderController.PrintKitchenTicketForOrderAsync(_context, order.Order_id, GetFrontendBaseUrl());
+                    if (!printed) Console.WriteLine($"[Order {order.Order_id}] {printMessage}");
                 }
 
                 return Ok(new
