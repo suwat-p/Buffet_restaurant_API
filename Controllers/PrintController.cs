@@ -24,7 +24,7 @@ namespace Buffet_Restaurant_Managment_System_API.Controllers
         }
 
         [HttpGet("print/{billId}")]
-        public async Task<IActionResult> PrintBill(int billId)
+        public async Task<IActionResult> PrintBill(int billId, string employeeName = "ไม่ระบุ")
         {
             var bill = await _context.Bill.FirstOrDefaultAsync(b => b.Bill_id == billId);
             if (bill == null) return NotFound(new { success = false, message = "ไม่พบข้อมูลบิล" });
@@ -44,14 +44,12 @@ namespace Buffet_Restaurant_Managment_System_API.Controllers
                                 select t.Table_Number).ToListAsync();
             if (tables.Any()) tableNumbers = string.Join(", ", tables);
 
-            string staffName = "-";
-            var emp = await _context.Employee.FirstOrDefaultAsync(e => e.Emp_id == bill.Emp_id);
-            if (emp != null) staffName = emp.Fullname;
+            string staffName = employeeName;
 
             var orderItems = await (from od in _context.Order_detail
                                     join o in _context.Orders on od.Order_id equals o.Order_id
                                     join m in _context.Menus on od.Menu_id equals m.Menu_id
-                                    where o.Bill_id == billId
+                                    where o.Bill_id == billId && od.PriceAtOrderTime > 0
                                     select new OrderItemDto
                                     {
                                         MenuName = m.Menu_Name,
@@ -179,7 +177,8 @@ namespace Buffet_Restaurant_Managment_System_API.Controllers
 
                 // --- INFO ---
                 DrawRow("เลขที่ใบเสร็จ:", $"{bill.Bill_id:D5}");
-                DrawRow("วันที่:", bill.Created_at.ToString("dd/MM/yyyy HH:mm:ss"));
+                DrawRow("วันที่เวลาเปิดบิล:", bill.Created_at.ToString("dd/MM/yyyy HH:mm:ss"));
+                DrawRow("วันที่เวลาปิดบิล:", bill.Closed_at?.ToString("dd/MM/yyyy HH:mm:ss") ?? "ยังไม่ได้ปิด");
                 DrawRow("โต๊ะ:", tables);
 
                 DrawDivider();
