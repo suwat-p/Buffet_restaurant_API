@@ -103,13 +103,23 @@ namespace Buffet_Restaurant_API.Controllers
                 }
 
                 // เช็คว่าการจองของบิลนี้เช็คอินแล้วหรือยัง (เช็คอินแล้ว = Completed)
-                bool alreadyCheckedIn = await (
+                // เช็คจาก 2 ทาง (อย่างใดอย่างหนึ่งก็ถือว่าเช็คอินแล้ว):
+                //  1) มีโต๊ะผูกกับบิลนี้แล้ว (CheckIn จะใส่ Bill_id ให้ GroupTables ทุกแถว)
+                //  2) การจองของบิลนี้สถานะ Completed
+                bool hasTableLinkedToBill = await _context.GroupTables
+                    .AnyAsync(gt => gt.Bill_id == finalBillId);
+
+                bool bookingCompleted = await (
                     from b in _context.Bill
                     from bk in _context.Bookings
                     where b.Bill_id == finalBillId
                           && b.Booking_id == bk.Booking_id
                           && bk.Booking_Status == "Completed"
                     select b.Bill_id).AnyAsync();
+
+                bool alreadyCheckedIn = hasTableLinkedToBill || bookingCompleted;
+
+                Console.WriteLine($"[PlaceOrder] bill={finalBillId} isPreOrder={isPreOrder} tableLinked={hasTableLinkedToBill} bookingCompleted={bookingCompleted}");
 
                 // สั่งหน้าร้าน หรือ สั่งล่วงหน้าแต่เช็คอินแล้ว -> เข้าครัวทันที
                 bool sendToKitchen = !isPreOrder || alreadyCheckedIn;
