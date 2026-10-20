@@ -303,7 +303,56 @@ namespace Buffet_Restaurant_API.Controllers
                 PrintMessage = printMessage
             });
         }
+        // ดึงออเดอร์ทั้งหมดที่สถานะ "กำลังจัดเตรียมอาหาร" สำหรับ Kitchen Dashboard
+        [HttpGet("getKitchenActiveOrders")]
+        public async Task<IActionResult> GetKitchenActiveOrders()
+        {
+            const string cooking = "กำลังจัดเตรียมอาหาร";
 
+            var orders = await _context.Orders
+                .Where(o => o.Order_Status == cooking)
+                .OrderByDescending(o => o.OrderDateTime)
+                .Select(o => new { o.Order_id, o.OrderDateTime, o.Bill_id })
+                .ToListAsync();
+
+            var orderIds = orders.Select(o => o.Order_id).ToList();
+
+            // รายการอาหารของทุกออเดอร์ ดึงครั้งเดียว
+            var allItems = await (from od in _context.Order_detail
+                                  join m in _context.Menus on od.Menu_id equals m.Menu_id
+                                  where orderIds.Contains(od.Order_id)
+                                  select new { od.Order_id, od.Menu_id, m.Menu_Name, od.Quantity })
+                                 .ToListAsync();
+
+            var result = new List<object>();
+            foreach (var o in orders)
+            {
+                var bill = await _context.Bill.FirstOrDefaultAsync(b => b.Bill_id == o.Bill_id);
+
+                var tableNumbers = await (from gt in _context.GroupTables
+                                          join t in _context.Tables on gt.Table_id equals t.Table_id
+                                          where gt.Bill_id == o.Bill_id ||
+                                                (bill != null && bill.Booking_id != null && gt.Booking_id == bill.Booking_id)
+                                          select t.Table_Number).Distinct().ToListAsync();
+
+                result.Add(new
+                {
+                    orderId = o.Order_id,
+                    orderTime = o.OrderDateTime,
+                    tableNumber = tableNumbers.Any() ? string.Join(", ", tableNumbers) : "ไม่ระบุโต๊ะ",
+                    items = allItems.Where(i => i.Order_id == o.Order_id)
+                                    .Select(i => new { menuId = i.Menu_id, menuName = i.Menu_Name, quantity = i.Quantity })
+                });
+            }
+
+            // นับ "เสร็จแล้ววันนี้" จาก DB
+            var today = DateTime.Today;
+            int completedToday = await _context.Orders.CountAsync(o =>
+                o.OrderDateTime >= today &&
+                (o.Order_Status == "เสร็จสิ้น" || o.Order_Status == "กำลังนำเสิร์ฟ"));
+
+            return Ok(new { activeOrders = result, completedTodayCount = completedToday });
+        }
         [HttpGet("{orderId}/serve")]
         [HttpPost("{orderId}/serve")]
         public async Task<IActionResult> ServeOrder(int orderId)
