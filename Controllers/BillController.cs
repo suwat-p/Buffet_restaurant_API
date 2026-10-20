@@ -181,6 +181,7 @@ namespace Buffet_Restaurant_API.Controllers
                 bill.Discount_id = dto.Discount_id;
                 bill.Total_amount = dto.Total_amount;
                 bill.PaymentMethod = dto.PaymentMethod ?? "เงินสด";
+                bill.Emp_id = dto.Emp_id;
 
                 // 🟢 3. บันทึกข้อมูลการชำระเงินลงตาราง Payment
                 var paymentRecord = new Payment
@@ -260,7 +261,15 @@ namespace Buffet_Restaurant_API.Controllers
             catch (Exception ex)
             {
                 await transaction.RollbackAsync();
-                return StatusCode(500, new { message = "เกิดข้อผิดพลาดในการปิดบิล", error = ex.Message });
+
+                // ดึงข้อความ Error เชิงลึกจาก Database
+                var dbError = ex.InnerException != null ? ex.InnerException.Message : ex.Message;
+
+                return StatusCode(500, new
+                {
+                    message = "เกิดข้อผิดพลาดในการปิดบิล",
+                    error = dbError // ส่ง Error ตัวนี้ไปแสดงผล
+                });
             }
         }
         [HttpGet("getBill")]
@@ -309,7 +318,7 @@ namespace Buffet_Restaurant_API.Controllers
             }
         }
         [HttpPut("updateFine/{billId}")]
-        public async Task<IActionResult> UpdateFine(int billId, [FromBody ] updateFineDto dto)
+        public async Task<IActionResult> UpdateFine(int billId, [FromBody] updateFineDto dto)
         {
             try
             {
