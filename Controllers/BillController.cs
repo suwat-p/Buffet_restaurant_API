@@ -194,9 +194,28 @@ namespace Buffet_Restaurant_API.Controllers
                     PaymentDateTime = DateTime.Now,
                 };
 
-                _context.Payment.Add(paymentRecord);
+                var pendingOrders = await _context.Orders
+             .Where(o => o.Bill_id == billId && o.Order_Status != "เสร็จสิ้น" && o.Order_Status != "ดำเนินการเสร็จสิ้น")
+             .ToListAsync();
 
-                // 🟢 4. ดึงโต๊ะผ่าน GroupTables (รองรับทั้งบิลจองและบิลหน้าร้าน)
+                if (pendingOrders.Any())
+                {
+                    var pendingOrderIds = pendingOrders.Select(o => o.Order_id).ToList();
+
+                    //ดึง Order_detail ที่อ้างอิงกับ Order_id ค้างเหล่านั้นมารอลบ
+                    var pendingDetails = await _context.Order_detail
+                        .Where(od => pendingOrderIds.Contains(od.Order_id))
+                        .ToListAsync();
+
+                    if (pendingDetails.Any())
+                    {
+                        _context.Order_detail.RemoveRange(pendingDetails);
+                    }
+
+                    // ลบหัวตาราง Orders ที่ยังทำไม่เสร็จ
+                    _context.Orders.RemoveRange(pendingOrders);
+                }
+                // ดึงโต๊ะผ่าน GroupTables (รองรับทั้งบิลจองและบิลหน้าร้าน)
                 var tableIds = new List<int>();
 
                 if (bill.Booking_id.HasValue)
@@ -223,18 +242,18 @@ namespace Buffet_Restaurant_API.Controllers
                         .ToListAsync();
                 }
 
-                // 🟢 5. ปรับสถานะโต๊ะในตาราง Tables เป็น "ว่าง"
+                // ปรับสถานะโต๊ะในตาราง Tables เป็น "ว่าง"
                 var tables = await _context.Tables
                     .Where(t => tableIds.Contains(t.Table_id))
                     .ToListAsync();
 
                 tables.ForEach(t => t.Table_Status = "ว่าง");
 
-                // 🟢 6. เซฟข้อมูลลง DB และ Commit Transaction
+                // เซฟข้อมูลลง DB และ Commit Transaction
                 await _context.SaveChangesAsync();
                 await transaction.CommitAsync();
 
-                // 🟢 7. ส่ง SignalR Real-time แจ้งเตือนบิลและสถานะโต๊ะเป็น "ว่าง"
+                //  ส่ง SignalR Real-time แจ้งเตือนบิลและสถานะโต๊ะเป็น "ว่าง"
                 await _hubContext.Clients.All.SendAsync("UpdateBill", new
                 {
                     billId = bill.Bill_id,
