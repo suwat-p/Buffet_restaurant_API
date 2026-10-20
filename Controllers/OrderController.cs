@@ -103,9 +103,7 @@ namespace Buffet_Restaurant_API.Controllers
                 }
 
                 // เช็คว่าการจองของบิลนี้เช็คอินแล้วหรือยัง (เช็คอินแล้ว = Completed)
-                // เช็คจาก 2 ทาง (อย่างใดอย่างหนึ่งก็ถือว่าเช็คอินแล้ว):
-                //  1) มีโต๊ะผูกกับบิลนี้แล้ว (CheckIn จะใส่ Bill_id ให้ GroupTables ทุกแถว)
-                //  2) การจองของบิลนี้สถานะ Completed
+
                 bool hasTableLinkedToBill = await _context.GroupTables
                     .AnyAsync(gt => gt.Bill_id == finalBillId);
 
