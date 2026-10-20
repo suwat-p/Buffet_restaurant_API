@@ -60,8 +60,6 @@ namespace Buffet_Restaurant_API.Controllers
             bool isPreOrder = dto.OrderType?.ToLower() == "preorder" || dto.OrderType == "สั่งล่วงหน้า";
             string orderTypeDisplay = isPreOrder ? "สั่งล่วงหน้า" : "สั่งหน้าร้าน";
 
-            string initialStatus = isPreOrder ? "รับออเดอร์" : "กำลังจัดเตรียมอาหาร";
-
             using var transaction = await _context.Database.BeginTransactionAsync();
 
             try
@@ -103,6 +101,19 @@ namespace Buffet_Restaurant_API.Controllers
                 {
                     return BadRequest(new { message = "ไม่สามารถระบุบิลสำหรับออเดอร์นี้ได้ กรุณาตรวจสอบ BookingId หรือ BillId" });
                 }
+
+                // เช็คว่าการจองของบิลนี้เช็คอินแล้วหรือยัง (เช็คอินแล้ว = Completed)
+                bool alreadyCheckedIn = await (
+                    from b in _context.Bill
+                    from bk in _context.Bookings
+                    where b.Bill_id == finalBillId
+                          && b.Booking_id == bk.Booking_id
+                          && bk.Booking_Status == "Completed"
+                    select b.Bill_id).AnyAsync();
+
+                // สั่งหน้าร้าน หรือ สั่งล่วงหน้าแต่เช็คอินแล้ว -> เข้าครัวทันที
+                bool sendToKitchen = !isPreOrder || alreadyCheckedIn;
+                string initialStatus = sendToKitchen ? "กำลังจัดเตรียมอาหาร" : "รับออเดอร์";
 
                 var newOrder = new Orders
                 {
@@ -146,9 +157,17 @@ namespace Buffet_Restaurant_API.Controllers
 
                 await transaction.CommitAsync();
 
-                if (!isPreOrder)
+                if (sendToKitchen)
                 {
                     await _hubContext.Clients.All.SendAsync("NewKitchenOrder", newOrder.Order_id);
+
+                    // ให้หน้าติดตามสถานะของลูกค้า (StatusPreOrder) อัปเดตทันที
+                    await _hubContext.Clients.All.SendAsync("OrderStatusUpdated", new
+                    {
+                        orderId = newOrder.Order_id,
+                        status = initialStatus,
+                        billId = finalBillId
+                    });
 
                     //  พิมพ์บิลครัวจากฝั่ง API ทันที ไม่ต้องรอให้มีหน้าแดชบอร์ดครัวเปิดอยู่
 

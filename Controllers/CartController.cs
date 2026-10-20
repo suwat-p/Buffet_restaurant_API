@@ -21,6 +21,10 @@ namespace Buffet_Restaurant_API.Controllers
         [HttpPost("add-item")]
         public async Task<IActionResult> AddItemToCart([FromBody] AddToCartDtos request)
         {
+            if ((request.TableId ?? 0) <= 0 && (request.BookingId ?? 0) <= 0)
+            {
+                return BadRequest(new { message = "กรุณาระบุ TableId หรือ BookingId" });
+            }
             if (request.TableId == null && request.BookingId == null)
             {
                 return BadRequest(new { message = "กรุณาระบุ TableId หรือ BookingId" });
