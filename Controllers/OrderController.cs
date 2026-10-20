@@ -579,6 +579,20 @@ namespace Buffet_Restaurant_API.Controllers
             }
         }
 
+        // สร้าง QR
+        private static SKBitmap CreateQrBitmap(string payload, int pixelsPerModule, int maxWidth)
+        {
+            using var gen = new QRCodeGenerator();
+            using var data = gen.CreateQrCode(payload, QRCodeGenerator.ECCLevel.M);
+
+            int modules = data.ModuleMatrix.Count;   // รวม quiet zone แล้ว
+            int ppm = pixelsPerModule;
+            while (ppm > 3 && modules * ppm > maxWidth) ppm--;
+
+            byte[] png = new PngByteQRCode(data).GetGraphic(ppm);
+            return SKBitmap.Decode(png);
+        }
+
         // วาดบิลครัวตามรูปใบเสร็จ
 
         private static SKBitmap DrawKitchenTicketImage(
@@ -589,9 +603,14 @@ namespace Buffet_Restaurant_API.Controllers
             string frontendBaseUrl)
         {
             int width = 576;                 // 80mm @ 203dpi
-            int qrSize = 160;
             float lineSpacing = 50;          // ปรับระยะห่างบรรทัดตรงนี้
-            int estimatedHeight = 650 + (int)(items.Count * lineSpacing) + qrSize;   // คำนวณตามจำนวนรายการ
+            int qrModulePx = 8;              // ขนาดจุด QR (px ต่อโมดูล) ยิ่งมากยิ่งใหญ่/สแกนง่าย: 6=เล็ก 8=แนะนำ 10=ใหญ่
+
+            // สร้าง QR ก่อน เพื่อให้รู้ขนาดจริงไว้คำนวณความสูงบิล
+            string serveUrl = $"{frontendBaseUrl}/serve-action?orderId={orderId}";
+            using SKBitmap qrBitmap = CreateQrBitmap(serveUrl, qrModulePx, width - 40);
+
+            int estimatedHeight = 700 + (int)(items.Count * lineSpacing) + qrBitmap.Height;   // คำนวณตามจำนวนรายการ
 
             SKBitmap bitmap = new SKBitmap(width, estimatedHeight);
             using (SKCanvas canvas = new SKCanvas(bitmap))
@@ -687,28 +706,16 @@ namespace Buffet_Restaurant_API.Controllers
                 DrawDivider();
                 y += 8;
 
-                // --- QR ---
-                string serveUrl = $"{frontendBaseUrl}/serve-action?orderId={orderId}";
-                using (QRCodeGenerator qrGen = new QRCodeGenerator())
-                {
-                    QRCodeData qrData = qrGen.CreateQrCode(serveUrl, QRCodeGenerator.ECCLevel.Q);
-                    PngByteQRCode qrPng = new PngByteQRCode(qrData);
-                    byte[] qrBytes = qrPng.GetGraphic(5);
+                // --- QR --- วาด 1:1 ไม่ย่อ/ขยาย ขอบคม โมดูลเท่ากันทุกจุด
+                float qrX = (float)Math.Round((width - qrBitmap.Width) / 2f);
+                canvas.DrawBitmap(qrBitmap, qrX, y);
+                y += qrBitmap.Height + 40;
 
-                    using SKBitmap qrBitmap = SKBitmap.Decode(qrBytes);
-                    float qrX = (width - qrSize) / 2f;
-                    SKRect srcRect = new SKRect(0, 0, qrBitmap.Width, qrBitmap.Height);
-                    SKRect destRect = new SKRect(qrX, y, qrX + qrSize, y + qrSize);
-
-                    // Nearest = ขอบ QR คมชัด ไม่เบลอ
-                    canvas.DrawBitmap(qrBitmap, srcRect, destRect, new SKSamplingOptions(SKFilterMode.Nearest), paint);
-                    y += qrSize + 40;
-                }
-
-                int finalHeight = (int)y;
+                int finalHeight = Math.Min((int)Math.Ceiling(y), estimatedHeight);
                 SKBitmap croppedBitmap = new SKBitmap(width, finalHeight);
                 using (SKCanvas cropCanvas = new SKCanvas(croppedBitmap))
                 {
+                    cropCanvas.Clear(SKColors.White);   // กันส่วนโปร่งใสถูกพิมพ์เป็นสีดำ
                     SKRect srcRect = new SKRect(0, 0, width, finalHeight);
                     SKRect destRect = new SKRect(0, 0, width, finalHeight);
                     cropCanvas.DrawBitmap(bitmap, srcRect, destRect, SKSamplingOptions.Default, paint);
