@@ -149,6 +149,11 @@ namespace Buffet_Restaurant_API.Controllers
                 if (!isPreOrder)
                 {
                     await _hubContext.Clients.All.SendAsync("NewKitchenOrder", newOrder.Order_id);
+
+                    // 🖨️ พิมพ์บิลครัวจากฝั่ง API ทันที ไม่ต้องรอให้มีหน้าแดชบอร์ดครัวเปิดอยู่
+                    // (ออเดอร์ถูกบันทึกแล้ว ถ้าพิมพ์พลาดจะไม่ทำให้การสั่งอาหารล้มเหลว)
+                    var (printed, printMessage) = await PrintTicketForOrderAsync(newOrder.Order_id);
+                    if (!printed) Console.WriteLine($"[Order {newOrder.Order_id}] {printMessage}");
                 }
 
                 return Ok(new
@@ -170,7 +175,7 @@ namespace Buffet_Restaurant_API.Controllers
 
         //ดึงสลิปใบบิลครัว + เจน QR Code + สั่งพิมพ์ 
         [HttpGet("getKitchenTicket/{orderId}")]
-        public async Task<IActionResult> GetKitchenTicket(int orderId, [FromServices] Cloudinary cloudinary = null)
+        public async Task<IActionResult> GetKitchenTicket(int orderId, [FromQuery] bool print = false, [FromServices] Cloudinary cloudinary = null)
         {
             var order = await _context.Orders
                 .Where(o => o.Order_id == orderId)
@@ -243,20 +248,12 @@ namespace Buffet_Restaurant_API.Controllers
             }
 
 
-            var printItems = items.Select(i => (i.MenuName, i.Quantity, i.Price)).ToList();
+            // พิมพ์ซ้ำได้โดยเรียก getKitchenTicket/{orderId}?print=true (ค่าปกติไม่พิมพ์ เพราะ PlaceOrder พิมพ์ให้แล้ว)
             bool printed = false;
-            string printMessage;
-
-            try
+            string printMessage = "ไม่ได้สั่งพิมพ์ (ใส่ ?print=true เพื่อพิมพ์ซ้ำ)";
+            if (print)
             {
-                await PrintKitchenTicketAsync(order.OrderId, tableDisplay, order.OrderTime, printItems);
-                printed = true;
-                printMessage = "สั่งพิมพ์บิลครัวเรียบร้อยแล้ว (Image Mode)";
-            }
-            catch (Exception ex)
-            {
-                printMessage = $"พิมพ์บิลครัวไม่สำเร็จ: {ex.Message}";
-                Console.WriteLine(printMessage);
+                (printed, printMessage) = await PrintTicketForOrderAsync(orderId);
             }
 
             return Ok(new
@@ -510,6 +507,48 @@ namespace Buffet_Restaurant_API.Controllers
             return Ok(activeOrders);
         }
 
+
+        // โหลดข้อมูลออเดอร์แล้วสั่งพิมพ์บิลครัว (ใช้ทั้งตอน checkout และตอน ?print=true)
+        private async Task<(bool Printed, string Message)> PrintTicketForOrderAsync(int orderId)
+        {
+            try
+            {
+                var order = await _context.Orders
+                    .Where(o => o.Order_id == orderId)
+                    .Select(o => new { o.Order_id, o.OrderDateTime, o.Bill_id })
+                    .FirstOrDefaultAsync();
+
+                if (order == null) return (false, "ไม่พบรายการออเดอร์");
+
+                var bill = await _context.Bill.FirstOrDefaultAsync(b => b.Bill_id == order.Bill_id);
+
+                var tableNumbers = await (from gt in _context.GroupTables
+                                          join t in _context.Tables on gt.Table_id equals t.Table_id
+                                          where (gt.Bill_id == order.Bill_id) ||
+                                                (bill != null && bill.Booking_id != null && gt.Booking_id == bill.Booking_id)
+                                          select t.Table_Number)
+                                          .Distinct()
+                                          .ToListAsync();
+
+                string tableDisplay = tableNumbers.Any() ? string.Join(", ", tableNumbers) : "ไม่ระบุโต๊ะ";
+
+                var items = await (from od in _context.Order_detail
+                                   join m in _context.Menus on od.Menu_id equals m.Menu_id
+                                   where od.Order_id == orderId
+                                   select new { m.Menu_Name, od.Quantity, od.PriceAtOrderTime }).ToListAsync();
+
+                var printItems = items.Select(i => (i.Menu_Name, i.Quantity, i.PriceAtOrderTime)).ToList();
+
+                await PrintKitchenTicketAsync(order.Order_id, tableDisplay, order.OrderDateTime, printItems);
+                return (true, "สั่งพิมพ์บิลครัวเรียบร้อยแล้ว (Image Mode)");
+            }
+            catch (Exception ex)
+            {
+                string msg = $"พิมพ์บิลครัวไม่สำเร็จ: {ex.Message}";
+                Console.WriteLine(msg);
+                return (false, msg);
+            }
+        }
 
         private async Task PrintKitchenTicketAsync(
             int orderId,
