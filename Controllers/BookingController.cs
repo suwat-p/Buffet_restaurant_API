@@ -41,10 +41,63 @@ namespace Buffet_Restaurant_API.Controllers
             return _configuration["FrontendBaseUrl"] ?? "https://buffet-restaurant-management-system.vercel.app";
         }
 
+        // ───────── ยกเลิกการจองอัตโนมัติถ้าไม่เช็คอินภายใน 30 นาที ─────────
+        private static readonly TimeSpan CheckInGracePeriod = TimeSpan.FromMinutes(30);
+
+        private static DateTime GetThaiNow()
+        {
+            try
+            {
+                return TimeZoneInfo.ConvertTimeFromUtc(
+                    DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("Asia/Bangkok"));
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                return TimeZoneInfo.ConvertTimeFromUtc(
+                    DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("SE Asia Standard Time"));
+            }
+        }
+
+        // ยกเลิกการจองที่ Confirmed แล้วเลยเวลาจองเกิน 30 นาที โดยยังไม่เช็คอิน
+        private async Task CancelExpiredBookingsAsync()
+        {
+            var deadline = GetThaiNow() - CheckInGracePeriod;
+
+            var expired = await _context.Bookings
+                .Include(b => b.GroupTables)
+                .Where(b => b.Booking_Status == "Confirmed" && b.Booking_DateTime <= deadline)
+                .ToListAsync();
+
+            if (expired.Count == 0) return;
+
+            var tableIds = expired
+                .SelectMany(b => b.GroupTables)
+                .Where(gt => gt.Table_id.HasValue)
+                .Select(gt => gt.Table_id!.Value)
+                .Distinct()
+                .ToList();
+
+            // คืนเฉพาะโต๊ะที่ยัง "ติดจอง" (ไม่แตะโต๊ะที่ลูกค้านั่งอยู่แล้ว)
+            var tables = await _context.Tables
+                .Where(t => tableIds.Contains(t.Table_id) && t.Table_Status == "ติดจอง")
+                .ToListAsync();
+
+            expired.ForEach(b => b.Booking_Status = "Cancelled");
+            tables.ForEach(t => t.Table_Status = "ว่าง");
+
+            await _context.SaveChangesAsync();
+
+            foreach (var table in tables)
+                await _hubContext.Clients.All
+                    .SendAsync("UpdateTable", new { tableId = table.Table_id, status = "ว่าง" });
+        }
+
 
         [HttpGet("available-tables")]
         public async Task<IActionResult> GetAvailableTables()
         {
+            await CancelExpiredBookingsAsync();
+
             var tables = await _context.Tables
                 .Select(t => new { t.Table_id, t.Table_Number, t.Table_Status, t.Table_QR_Code })
                 .ToListAsync();
@@ -54,6 +107,8 @@ namespace Buffet_Restaurant_API.Controllers
         [HttpGet("member/{memberId}")]
         public async Task<IActionResult> GetByMember(int memberId)
         {
+            await CancelExpiredBookingsAsync();
+
             var bookings = await _context.Bookings
                 .Include(b => b.Member)
                 .Include(b => b.GroupTables).ThenInclude(gt => gt.Table)
@@ -77,6 +132,8 @@ namespace Buffet_Restaurant_API.Controllers
         [HttpGet("{id}")]
         public async Task<IActionResult> GetBooking(int id)
         {
+            await CancelExpiredBookingsAsync();
+
             var booking = await _context.Bookings
                 .Include(b => b.Member)
                 .Include(b => b.GroupTables).ThenInclude(gt => gt.Table)
@@ -101,6 +158,8 @@ namespace Buffet_Restaurant_API.Controllers
         [HttpGet("checkin-info")]
         public async Task<IActionResult> GetCheckinInfo([FromQuery] int bookingId, [FromQuery] int tableId)
         {
+            await CancelExpiredBookingsAsync();
+
             var booking = await _context.Bookings
                 .Include(b => b.Member)
                 .Include(b => b.GroupTables).ThenInclude(gt => gt.Table)
@@ -141,6 +200,8 @@ namespace Buffet_Restaurant_API.Controllers
         [HttpPost("create")]
         public async Task<IActionResult> CreateBooking([FromBody] CreateBookingDto dto)
         {
+            await CancelExpiredBookingsAsync();
+
             var availableTables = await _context.Tables
                 .Where(t => dto.Table_ids.Contains(t.Table_id) && t.Table_Status == "ว่าง")
                 .ToListAsync();
@@ -162,10 +223,10 @@ namespace Buffet_Restaurant_API.Controllers
                 decimal pricePerAdult = resConfig?.Price_Adult ?? 0m;
                 decimal pricePerChild = resConfig?.Price_Child ?? 0m;
 
-                // 🟢 2. คำนวณราคารวมจริง
+                // คำนวณราคารวมจริง
                 decimal total = (dto.Adult_Count * pricePerAdult) + (dto.Child_Count * pricePerChild);
 
-                // 🟢 3. คำนวณยอดมัดจำ 50% จากราคารวม
+                //  คำนวณยอดมัดจำ 50% จากราคารวม
                 decimal deposit = total * 0.5m;
 
                 var booking = new Booking
@@ -212,10 +273,12 @@ namespace Buffet_Restaurant_API.Controllers
         [HttpPost("checkin")]
         public async Task<IActionResult> CheckIn([FromBody] CheckinDto dto)
         {
+            await CancelExpiredBookingsAsync();
+
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
-                // 1. ค้นหาข้อมูลการจองพร้อม GroupTables
+                // ค้นหาข้อมูลการจองพร้อม GroupTables
                 var booking = await _context.Bookings
                     .Include(b => b.GroupTables)
                     .FirstOrDefaultAsync(b => b.Booking_id == dto.BookingId);
@@ -226,7 +289,7 @@ namespace Buffet_Restaurant_API.Controllers
                 if (booking.Booking_Status != "Confirmed")
                     return BadRequest(new { message = $"ไม่สามารถเช็คอินได้ สถานะการจองคือ '{booking.Booking_Status}'" });
 
-                // 🎯 2. ดึง Table_id ทั้งหมดจาก GroupTables ของ Booking นี้
+                //  ดึง Table_id ทั้งหมดจาก GroupTables ของ Booking นี้
                 var allTableIds = booking.GroupTables
                     .Where(gt => gt.Table_id.HasValue)
                     .Select(gt => gt.Table_id!.Value)
@@ -235,14 +298,14 @@ namespace Buffet_Restaurant_API.Controllers
                 if (!allTableIds.Any())
                     return BadRequest(new { message = "ไม่พบข้อมูลโต๊ะที่ผูกกับการจองนี้" });
 
-                // 3. เปลี่ยนสถานะโต๊ะทั้งหมดเป็น "ไม่ว่าง"
+                //  เปลี่ยนสถานะโต๊ะทั้งหมดเป็น "ไม่ว่าง"
                 var allTables = await _context.Tables
                     .Where(t => allTableIds.Contains(t.Table_id))
                     .ToListAsync();
 
                 allTables.ForEach(t => t.Table_Status = "ไม่ว่าง");
 
-                // 4. หา Bill ของการจองนี้: ถ้าเคยสั่งอาหารล่วงหน้าไว้จะมี Bill อยู่แล้ว (สร้างจาก PlaceOrder)
+                //  หา Bill ของการจองนี้: ถ้าเคยสั่งอาหารล่วงหน้าไว้จะมี Bill อยู่แล้ว (สร้างจาก PlaceOrder)
                 //    ให้ใช้ใบเดิมต่อ ห้ามสร้างใหม่ซ้ำ ไม่งั้นออเดอร์ที่สั่งล่วงหน้าจะหลุดไปอยู่คนละบิลกับโต๊ะที่เช็คอิน
                 var existingBill = await _context.Bill
                     .FirstOrDefaultAsync(b => b.Booking_id == booking.Booking_id);
@@ -278,13 +341,13 @@ namespace Buffet_Restaurant_API.Controllers
 
                 await _context.SaveChangesAsync(); // บันทึกเพื่อให้ได้ autoBill.Bill_id
 
-                // 🎯 5. หยอด Bill_id ใส่ใน GroupTables ทุกแถวของการจองนี้
+                // 🎯  หยอด Bill_id ใส่ใน GroupTables ทุกแถวของการจองนี้
                 foreach (var gt in booking.GroupTables)
                 {
                     gt.Bill_id = autoBill.Bill_id;
                 }
 
-                // 6. อัปเดตสถานะการจองเป็น Completed
+                //  อัปเดตสถานะการจองเป็น Completed
                 booking.Booking_Status = "Completed";
 
                 // 🍳 7. ลูกค้ามาถึงแล้ว -> ออเดอร์ที่สั่งล่วงหน้าไว้ (สถานะยังเป็น "รับออเดอร์") ให้เริ่มเข้าครัวได้เลย
